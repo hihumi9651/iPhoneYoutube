@@ -6,81 +6,237 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="積読">
+<meta name="apple-mobile-web-app-title" content="マイYouTube">
 <meta name="theme-color" content="#111111">
 <title>マイYouTube</title>
 <style>
-  :root { --bg:#111; --fg:#eee; --sub:#999; --card:#1c1c1c; --accent:#e8b04b; }
+  :root { --bg:#111; --fg:#eee; --sub:#999; --card:#1c1c1c; --line:#2a2a2a; --accent:#e8b04b; }
   * { box-sizing:border-box; }
   body {
     margin:0; background:var(--bg); color:var(--fg);
     font-family:-apple-system, "Hiragino Sans", sans-serif;
-    padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+    padding-bottom:env(safe-area-inset-bottom);
   }
-  header { padding:16px 16px 8px; }
-  h1 { margin:0; font-size:20px; }
-  p.sub { margin:4px 0 0; color:var(--sub); font-size:13px; }
-  nav { display:flex; gap:8px; padding:8px 16px; overflow-x:auto; }
-  nav button {
-    flex:none; border:1px solid #333; background:var(--card); color:var(--fg);
-    padding:8px 14px; border-radius:999px; font-size:14px;
+  .top { position:sticky; top:0; z-index:10; background:var(--bg); padding-top:env(safe-area-inset-top); }
+  .player { position:relative; width:100%; aspect-ratio:16/9; background:#000; display:none; }
+  .player.show { display:block; }
+  .player > div, .player iframe { position:absolute; inset:0; width:100%; height:100%; border:0; }
+  .now { display:none; align-items:center; gap:8px; padding:8px 12px; border-bottom:1px solid var(--line); font-size:13px; }
+  .now.show { display:flex; }
+  .now .t { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .now button { flex:none; }
+  nav { display:flex; gap:8px; padding:10px 12px 6px; overflow-x:auto; }
+  button {
+    font:inherit; color:var(--fg); background:var(--card); border:1px solid #333;
+    border-radius:999px; padding:6px 12px; font-size:13px;
   }
-  nav button.active { border-color:var(--accent); color:var(--accent); }
-  .player { position:relative; width:100%; aspect-ratio:16/9; background:#000; }
-  .player iframe { position:absolute; inset:0; width:100%; height:100%; border:0; }
-  .hint { padding:12px 16px; color:var(--sub); font-size:12px; line-height:1.6; }
+  nav button { flex:none; font-size:14px; padding:8px 14px; }
+  button.active { border-color:var(--accent); color:var(--accent); }
+  .tools { display:flex; gap:6px; padding:4px 12px 10px; flex-wrap:wrap; align-items:center; border-bottom:1px solid var(--line); }
+  .tools input[type=search] {
+    flex:1 1 100%; font:inherit; font-size:16px; color:var(--fg); background:var(--card);
+    border:1px solid #333; border-radius:10px; padding:8px 10px;
+  }
+  ul { list-style:none; margin:0; padding:0; }
+  li { display:flex; gap:10px; padding:10px 12px; border-bottom:1px solid var(--line); }
+  li.playing { background:#221d12; }
+  li img { width:128px; aspect-ratio:16/9; object-fit:cover; border-radius:6px; flex:none; background:#222; }
+  li .meta { flex:1; min-width:0; display:flex; flex-direction:column; gap:4px; }
+  li .title { font-size:14px; line-height:1.35; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+  li .info { font-size:12px; color:var(--sub); }
+  .badge { color:var(--accent); }
+  .msg { padding:24px 16px; color:var(--sub); font-size:14px; line-height:1.7; }
+  .more { display:block; margin:16px auto; }
+  footer { display:flex; gap:8px; justify-content:center; padding:16px; }
 </style>
 </head>
 <body>
-<header>
-  <h1 id="title">積読チャンネル</h1>
-  <p class="sub">新しい動画から順に再生します。プレーヤー右上のリストから動画を選べます。</p>
-</header>
-
-<!-- チャンネルが2つ以上になると、ここに切り替えボタンが並びます -->
-<nav id="tabs"></nav>
-
-<div class="player">
-  <iframe id="player" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>
+<div class="top">
+  <div class="player" id="playerBox"><div id="player"></div></div>
+  <div class="now" id="now">
+    <span class="t" id="nowTitle"></span>
+    <span class="badge" id="nowCount"></span>
+    <button id="minus" title="回数を1減らす">−1</button>
+    <button id="close">閉じる</button>
+  </div>
+  <nav id="tabs"></nav>
+  <div class="tools">
+    <input type="search" id="q" placeholder="タイトルで検索">
+    <button id="sort">新しい順</button>
+    <button id="unwatched">未視聴のみ</button>
+    <button id="noShorts">3分以下を隠す</button>
+  </div>
 </div>
 
+<ul id="list"></ul>
+<button class="more" id="more" hidden>もっと見る</button>
+<div class="msg" id="msg" hidden></div>
+
+<footer>
+  <button id="export">視聴回数を書き出す</button>
+  <button id="import">読み込む</button>
+  <input type="file" id="file" accept="application/json" hidden>
+</footer>
+
 <script>
-  // 見てもいいチャンネルの一覧。id は youtube.com/channel/UC... の「UC...」の部分
-  const CHANNELS = [
-    { name: "積読チャンネル", id: "UCuG0Ay4D67uecldB_G9Ymeg" },
-    { name: "Sifu", id: "UCrm0e3hIB8AktJiV_H0WfNA" },
-  ];
+const PAGE = 50;            // 一度に表示する件数
+const WATCHED_RATIO = 0.9;  // ここまで見たら「1回視聴」として数える
+const STORE_KEY = "watchCounts";
 
-  // チャンネルIDの先頭 UC を UU にすると「アップロード動画」のプレイリストIDになる
-  const uploadsId = (channelId) => "UU" + channelId.slice(2);
+let channels = [], videos = {}, current = 0, shown = PAGE;
+let opts = { q: "", oldFirst: false, unwatched: false, noShorts: false };
+let counts = load();
+let player = null, playingId = null, countedThisPlay = false, timer = null;
 
-  function play(i) {
-    const ch = CHANNELS[i];
-    const params = new URLSearchParams({
-      list: uploadsId(ch.id),
-      rel: "0",            // 関連動画を同じチャンネルの動画に限る
-      playsinline: "1",
-      modestbranding: "1",
-    });
-    document.getElementById("player").src =
-      "https://www.youtube-nocookie.com/embed/videoseries?" + params;
-    document.getElementById("title").textContent = ch.name;
-    document.querySelectorAll("#tabs button").forEach((b, j) =>
-      b.classList.toggle("active", i === j));
+function load() {
+  try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch { return {}; }
+}
+function save() {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(counts)); } catch {}
+}
+const $ = (id) => document.getElementById(id);
+const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+const fmtDate = (iso) => { const d = new Date(iso); return `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`; };
+const fmtSec = (s) => { if (!s) return ""; const h = Math.floor(s/3600), m = Math.floor(s%3600/60), x = s%60;
+  return (h ? h + ":" + String(m).padStart(2,"0") : m) + ":" + String(x).padStart(2,"0"); };
+
+async function init() {
+  channels = await (await fetch("channels.json", { cache: "no-cache" })).json();
+  try {
+    videos = await (await fetch("videos.json", { cache: "no-cache" })).json();
+  } catch {
+    videos = {};
   }
+  channels.forEach((ch, i) => {
+    const b = document.createElement("button");
+    b.textContent = ch.name;
+    b.onclick = () => { current = i; shown = PAGE; render(); scrollTo(0, 0); };
+    $("tabs").appendChild(b);
+  });
+  render();
+}
 
-  const tabs = document.getElementById("tabs");
-  if (CHANNELS.length > 1) {
-    CHANNELS.forEach((ch, i) => {
-      const b = document.createElement("button");
-      b.textContent = ch.name;
-      b.onclick = () => play(i);
-      tabs.appendChild(b);
-    });
-  } else {
-    tabs.style.display = "none";
+function filtered() {
+  let list = videos[channels[current].id] || [];
+  const q = opts.q.trim().toLowerCase();
+  if (q) list = list.filter((v) => v.title.toLowerCase().includes(q));
+  if (opts.unwatched) list = list.filter((v) => !counts[v.id]);
+  if (opts.noShorts) list = list.filter((v) => !v.sec || v.sec > 180);
+  if (opts.oldFirst) list = [...list].reverse();
+  return list;
+}
+
+function render() {
+  document.querySelectorAll("#tabs button").forEach((b, i) => b.classList.toggle("active", i === current));
+  const all = videos[channels[current].id];
+  const msg = $("msg");
+  if (!all) {
+    msg.hidden = false;
+    msg.textContent = "このチャンネルの動画一覧はまだ取得されていません。毎朝自動で更新されます。";
+    $("list").innerHTML = ""; $("more").hidden = true; return;
   }
-  play(0);
+  const list = filtered();
+  msg.hidden = list.length > 0;
+  msg.textContent = "該当する動画がありません。";
+  $("list").innerHTML = list.slice(0, shown).map((v) => `
+    <li data-id="${v.id}" class="${v.id === playingId ? "playing" : ""}">
+      <img loading="lazy" src="https://i.ytimg.com/vi/${v.id}/mqdefault.jpg" alt="">
+      <div class="meta">
+        <div class="title">${esc(v.title)}</div>
+        <div class="info">${fmtDate(v.date)}${v.sec ? " · " + fmtSec(v.sec) : ""}
+          ${counts[v.id] ? `<span class="badge"> · ${counts[v.id]}回視聴</span>` : ""}</div>
+      </div>
+    </li>`).join("");
+  $("more").hidden = list.length <= shown;
+}
+
+$("list").onclick = (e) => {
+  const li = e.target.closest("li");
+  if (li) play(li.dataset.id);
+};
+$("more").onclick = () => { shown += PAGE; render(); };
+$("q").oninput = (e) => { opts.q = e.target.value; shown = PAGE; render(); };
+$("sort").onclick = (e) => { opts.oldFirst = !opts.oldFirst; e.target.textContent = opts.oldFirst ? "古い順" : "新しい順"; shown = PAGE; render(); };
+$("unwatched").onclick = (e) => { opts.unwatched = !opts.unwatched; e.target.classList.toggle("active", opts.unwatched); shown = PAGE; render(); };
+$("noShorts").onclick = (e) => { opts.noShorts = !opts.noShorts; e.target.classList.toggle("active", opts.noShorts); shown = PAGE; render(); };
+
+// ---- 再生と視聴回数 ----
+function findVideo(id) {
+  for (const k in videos) { const v = videos[k].find((x) => x.id === id); if (v) return v; }
+  return null;
+}
+function updateNow() {
+  const v = findVideo(playingId);
+  $("nowTitle").textContent = v ? v.title : "";
+  $("nowCount").textContent = `${counts[playingId] || 0}回`;
+}
+function addCount() {
+  if (countedThisPlay || !playingId) return;
+  countedThisPlay = true;
+  counts[playingId] = (counts[playingId] || 0) + 1;
+  save(); updateNow(); render();
+}
+
+function play(id) {
+  playingId = id; countedThisPlay = false;
+  $("playerBox").classList.add("show"); $("now").classList.add("show");
+  updateNow(); render();
+  if (player) { if (player.loadVideoById) player.loadVideoById(id); return; }  // 準備中なら onReady で読み込む
+  if (!window.YT || !YT.Player) { window.onYouTubeIframeAPIReady = () => play(playingId); return; }
+  player = new YT.Player("player", {
+    host: "https://www.youtube-nocookie.com",
+    videoId: id,
+    playerVars: { playsinline: 1, rel: 0, autoplay: 1 },
+    events: {
+      onStateChange: onState,
+      onReady: () => { if (player.getVideoData().video_id !== playingId) player.loadVideoById(playingId); },
+    },
+  });
+}
+function onState(e) {
+  clearInterval(timer);
+  if (e.data === YT.PlayerState.PLAYING) {
+    timer = setInterval(() => {
+      const d = player.getDuration(), t = player.getCurrentTime();
+      if (d > 0 && t / d >= WATCHED_RATIO) addCount();
+    }, 2000);
+  }
+  if (e.data === YT.PlayerState.ENDED) addCount();
+}
+$("minus").onclick = () => {
+  if (!playingId || !counts[playingId]) return;
+  counts[playingId]--; if (!counts[playingId]) delete counts[playingId];
+  save(); updateNow(); render();
+};
+$("close").onclick = () => {
+  if (player && player.stopVideo) player.stopVideo();
+  clearInterval(timer); playingId = null;
+  $("playerBox").classList.remove("show"); $("now").classList.remove("show"); render();
+};
+
+// ---- 視聴回数のバックアップ ----
+$("export").onclick = async () => {
+  const text = JSON.stringify(counts);
+  const file = new File([text], "watch-counts.json", { type: "application/json" });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file] }); return; } catch {}
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(file); a.download = file.name; a.click();
+};
+$("import").onclick = () => $("file").click();
+$("file").onchange = async (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  try {
+    const data = JSON.parse(await f.text());
+    for (const id in data) counts[id] = Math.max(counts[id] || 0, Number(data[id]) || 0);
+    save(); render(); if (playingId) updateNow();
+  } catch {}
+  e.target.value = "";
+};
+
+init();
 </script>
+<script src="https://www.youtube.com/iframe_api"></script>
 </body>
 </html>
